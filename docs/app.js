@@ -27,15 +27,61 @@ chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } })
 
 let priceLines = [];
 
+// ---- Multi-source OHLCV (fallback chain — some exchanges are geo-blocked) ----
+function okxSymbol(s) {
+  for (const q of ['USDT', 'USDC', 'BUSD', 'USD', 'BTC', 'ETH'])
+    if (s.endsWith(q)) return s.slice(0, -q.length) + '-' + q;
+  return s;
+}
+const SOURCES = [
+  {
+    name: 'Bybit',
+    url: (s, i, lim) => {
+      const m = { '5m': '5', '15m': '15', '1h': '60', '4h': '240', '1d': 'D', '1w': 'W' };
+      return `https://api.bybit.com/v5/market/kline?category=spot&symbol=${s}&interval=${m[i]}&limit=${Math.min(lim, 1000)}`;
+    },
+    parse: (j) => {
+      if (j.retCode !== 0 || !j.result || !j.result.list) throw new Error('Bybit: ' + (j.retMsg || 'no data'));
+      return j.result.list.map((k) => ({
+        time: Math.floor(+k[0] / 1000), open: +k[1], high: +k[2], low: +k[3], close: +k[4], volume: +k[5],
+      })).reverse();
+    },
+  },
+  {
+    name: 'Binance',
+    url: (s, i, lim) => `https://api.binance.com/api/v3/klines?symbol=${s}&interval=${i}&limit=${lim}`,
+    parse: (raw) => raw.map((k) => ({
+      time: Math.floor(k[0] / 1000), open: +k[1], high: +k[2], low: +k[3], close: +k[4], volume: +k[5],
+    })),
+  },
+  {
+    name: 'OKX',
+    url: (s, i, lim) => {
+      const m = { '5m': '5m', '15m': '15m', '1h': '1H', '4h': '4H', '1d': '1D', '1w': '1W' };
+      return `https://www.okx.com/api/v5/market/candles?instId=${okxSymbol(s)}&bar=${m[i]}&limit=${Math.min(lim, 300)}`;
+    },
+    parse: (j) => {
+      if (j.code !== '0' || !j.data) throw new Error('OKX: ' + (j.msg || 'no data'));
+      return j.data.map((k) => ({
+        time: Math.floor(+k[0] / 1000), open: +k[1], high: +k[2], low: +k[3], close: +k[4], volume: +k[5],
+      })).reverse();
+    },
+  },
+];
+
 async function fetchKlines(symbol, interval, limit = 600) {
-  const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error('Binance API: ' + res.status);
-  const raw = await res.json();
-  return raw.map((k) => ({
-    time: Math.floor(k[0] / 1000),
-    open: +k[1], high: +k[2], low: +k[3], close: +k[4], volume: +k[5],
-  }));
+  let lastErr = '';
+  for (const src of SOURCES) {
+    try {
+      $('status').textContent = 'Thử ' + src.name + '…';
+      const res = await fetch(src.url(symbol, interval, limit));
+      if (!res.ok) { lastErr = src.name + ' HTTP ' + res.status; continue; }
+      const data = src.parse(await res.json());
+      if (data && data.length) { window.__src = src.name; return data; }
+      lastErr = src.name + ' rỗng';
+    } catch (e) { lastErr = src.name + ': ' + e.message; }
+  }
+  throw new Error('Tất cả nguồn lỗi (' + lastErr + ')');
 }
 
 function render(data) {
@@ -112,7 +158,7 @@ async function load() {
     const data = await fetchKlines(symbol, interval);
     render(data);
     const last = data[data.length - 1];
-    $('status').textContent = symbol + ' ' + interval + ' · ' + data.length + ' nến · last ' + last.close;
+    $('status').textContent = symbol + ' ' + interval + ' · ' + data.length + ' nến · last ' + last.close + ' · nguồn: ' + (window.__src || '?');
     $('legend').innerHTML =
       '<b style="color:#2962FF">━ VWMA(20)</b> · ' +
       '<span style="color:#FC6C85">● FearZone</span> · ' +
