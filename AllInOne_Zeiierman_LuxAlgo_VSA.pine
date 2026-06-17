@@ -1,0 +1,187 @@
+// This work is licensed under a Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0)
+// https://creativecommons.org/licenses/by-nc-sa/4.0/
+//
+// All-in-One combination of 4 indicators (combined for personal/educational use):
+//   1) FearZone (Zeiierman)                         © Zeiierman
+//   2) GreedZone (Zeiierman)                        © Zeiierman
+//   3) Support & Resistance Levels with Breaks      © LuxAlgo
+//   4) VSA Wyckoff Volume                           (VSA / Wyckoff volume)
+//
+// NOTE on panes: VSA Volume lives in a SEPARATE pane, so this indicator is based in its
+// own pane (overlay=false / format.volume) and every price-chart element uses
+// force_overlay=true so it draws on the main chart — reproducing the combined look.
+
+//@version=5
+indicator('All-in-One: Fear/Greed + S/R + VSA (Combined)', shorttitle='AIO FZ/GZ + S/R + VSA', overlay=false, format=format.volume, max_bars_back=1000)
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+//  GENERAL / SHARED INPUTS
+// ════════════════════════════════════════════════════════════════════════════════
+source = input.source(ohlc4, title='Source', group='General', tooltip='Shared source for Fear/Greed calculations')
+matype = input.string('WMA', options=['SMA', 'EMA', 'WMA', 'HMA', 'RMA'], title='Select Moving Average', group='General', tooltip='Average type used by Fear/Greed zones')
+
+// Shared moving-average helper
+average(src_, len_) =>
+    switch matype
+        'SMA' => ta.sma(src_, len_)
+        'EMA' => ta.ema(src_, len_)
+        'WMA' => ta.wma(src_, len_)
+        'HMA' => ta.hma(src_, len_)
+        'RMA' => ta.rma(src_, len_)
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+//  1) FEARZONE (Zeiierman)
+// ════════════════════════════════════════════════════════════════════════════════
+fz_on        = input.bool(true, title='Enable FearZone', group='🔴 FearZone (Zeiierman)')
+fz_high      = input.int(30, title='High Period', group='🔴 FearZone (Zeiierman)', tooltip='Number of bars for the highest high calculation')
+fz_stdev     = input.int(50, title='Stdev Period', group='🔴 FearZone (Zeiierman)', tooltip='Number of bars for standard deviation calculation')
+fz_alertCirc = input.bool(true, title='Show Alert Circle?', group='🔴 FearZone (Zeiierman)')
+fz_body      = input.color(#FC6C85, title='Body', group='🔴 FearZone (Zeiierman)', inline='fzcol')
+fz_border    = input.color(color.red, title='Border', group='🔴 FearZone (Zeiierman)', inline='fzcol')
+
+calc_FZ1(src, hp, sp) =>
+    FZ1      = (ta.highest(src, hp) - src) / ta.highest(src, hp)
+    AVG1     = average(FZ1, sp)
+    STDEV1   = ta.stdev(FZ1, sp)
+    FZ1Limit = AVG1 + STDEV1
+    [FZ1, FZ1Limit]
+
+calc_FZ2(src, hp, sp) =>
+    FZ2      = average(src, hp)
+    AVG2     = average(FZ2, sp)
+    STDEV2   = ta.stdev(FZ2, sp)
+    FZ2Limit = AVG2 - STDEV2
+    [FZ2, FZ2Limit]
+
+[FZ1, FZ1Limit] = calc_FZ1(source, fz_high, fz_stdev)
+[FZ2, FZ2Limit] = calc_FZ2(source, fz_high, fz_stdev)
+
+Fearzone_Con  = fz_on and FZ1 > FZ1Limit and FZ2 < FZ2Limit
+FearZoneOpen  = Fearzone_Con ? low - ta.tr : na
+FearZoneClose = Fearzone_Con ? low - 2 * ta.tr : na
+
+plotcandle(FearZoneOpen, FearZoneOpen, FearZoneClose, FearZoneClose, color=fz_body, bordercolor=fz_border, title='FearZone Candlesticks', force_overlay=true)
+
+fz_AlertCol = Fearzone_Con != Fearzone_Con[1] and fz_alertCirc ? fz_body : na
+plotshape(Fearzone_Con, style=shape.circle, location=location.belowbar, size=size.tiny, color=fz_AlertCol, title='FearZone Alert Circle', force_overlay=true)
+
+alertcondition(Fearzone_Con != Fearzone_Con[1], title='FearZone', message='FearZone detected')
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+//  2) GREEDZONE (Zeiierman)
+// ════════════════════════════════════════════════════════════════════════════════
+gz_on        = input.bool(true, title='Enable GreedZone', group='🟢 GreedZone (Zeiierman)')
+gz_low       = input.int(30, title='Low Period', group='🟢 GreedZone (Zeiierman)', tooltip='Number of bars for the lowest low calculation')
+gz_stdev     = input.int(50, title='Stdev Period', group='🟢 GreedZone (Zeiierman)', tooltip='Number of bars for standard deviation calculation')
+gz_alertCirc = input.bool(true, title='Show Alert Circle?', group='🟢 GreedZone (Zeiierman)')
+gz_body      = input.color(#90EE90, title='Body', group='🟢 GreedZone (Zeiierman)', inline='gzcol')
+gz_border    = input.color(color.green, title='Border', group='🟢 GreedZone (Zeiierman)', inline='gzcol')
+
+calc_GZ1(src, lp, sp) =>
+    GZ1      = (ta.lowest(src, lp) - src) / ta.lowest(src, lp)
+    AVG1     = average(GZ1, sp)
+    STDEV1   = ta.stdev(GZ1, sp)
+    GZ1Limit = AVG1 - STDEV1
+    [GZ1, GZ1Limit]
+
+calc_GZ2(src, lp, sp) =>
+    GZ2      = average(src, lp)
+    AVG2     = average(GZ2, sp)
+    STDEV2   = ta.stdev(GZ2, sp)
+    GZ2Limit = AVG2 + STDEV2
+    [GZ2, GZ2Limit]
+
+[GZ1, GZ1Limit] = calc_GZ1(source, gz_low, gz_stdev)
+[GZ2, GZ2Limit] = calc_GZ2(source, gz_low, gz_stdev)
+
+Greedzone_Con  = gz_on and GZ1 < GZ1Limit and GZ2 > GZ2Limit
+GreedZoneOpen  = Greedzone_Con ? low + ta.tr : na
+GreedZoneClose = Greedzone_Con ? low + 2 * ta.tr : na
+
+plotcandle(GreedZoneOpen, GreedZoneOpen, GreedZoneClose, GreedZoneClose, color=gz_body, bordercolor=gz_border, title='GreedZone Candlesticks', force_overlay=true)
+
+gz_AlertCol = Greedzone_Con != Greedzone_Con[1] and gz_alertCirc ? gz_body : na
+plotshape(Greedzone_Con, style=shape.circle, location=location.abovebar, size=size.tiny, color=gz_AlertCol, title='GreedZone Alert Circle', force_overlay=true)
+
+alertcondition(Greedzone_Con != Greedzone_Con[1], title='GreedZone', message='GreedZone detected')
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+//  3) SUPPORT & RESISTANCE LEVELS WITH BREAKS (LuxAlgo)  — converted v4 -> v5
+// ════════════════════════════════════════════════════════════════════════════════
+sr_on         = input.bool(true,  title='Enable Support/Resistance', group='📊 Support & Resistance (LuxAlgo)')
+toggleBreaks  = input.bool(true,  title='Show Breaks', group='📊 Support & Resistance (LuxAlgo)')
+leftBars      = input.int(15,     title='Left Bars',  group='📊 Support & Resistance (LuxAlgo)')
+rightBars     = input.int(15,     title='Right Bars', group='📊 Support & Resistance (LuxAlgo)')
+volumeThresh  = input.int(20,     title='Volume Threshold', group='📊 Support & Resistance (LuxAlgo)')
+res_col       = input.color(#FF0000, title='Resistance', group='📊 Support & Resistance (LuxAlgo)', inline='srcol')
+sup_col       = input.color(#233DEE, title='Support',    group='📊 Support & Resistance (LuxAlgo)', inline='srcol')
+
+highUsePivot = fixnan(ta.pivothigh(leftBars, rightBars)[1])
+lowUsePivot  = fixnan(ta.pivotlow(leftBars, rightBars)[1])
+
+// Gap the line (na) on the bar where the level changes, otherwise draw it
+r_changed = ta.change(highUsePivot)
+s_changed = ta.change(lowUsePivot)
+r_lineCol = (not na(r_changed) and r_changed != 0) or not sr_on ? na : res_col
+s_lineCol = (not na(s_changed) and s_changed != 0) or not sr_on ? na : sup_col
+
+plot(sr_on ? highUsePivot : na, color=r_lineCol, linewidth=3, offset=-(rightBars + 1), title='Resistance', force_overlay=true)
+plot(sr_on ? lowUsePivot  : na, color=s_lineCol, linewidth=3, offset=-(rightBars + 1), title='Support',    force_overlay=true)
+
+// Volume oscillator for break confirmation
+shortV = ta.ema(volume, 5)
+longV  = ta.ema(volume, 10)
+osc    = 100 * (shortV - longV) / longV
+
+sr_showBreaks = sr_on and toggleBreaks
+
+// Breaks confirmed by volume
+plotshape(sr_showBreaks and ta.crossunder(close, lowUsePivot) and not (open - close < high - open) and osc > volumeThresh, title='Support Break', text='B', style=shape.labeldown, location=location.abovebar, color=color.red,   textcolor=color.white, size=size.tiny, force_overlay=true)
+plotshape(sr_showBreaks and ta.crossover(close, highUsePivot) and not (open - low > close - open)  and osc > volumeThresh, title='Resistance Break', text='B', style=shape.labelup,   location=location.belowbar, color=color.green, textcolor=color.white, size=size.tiny, force_overlay=true)
+
+// Bull / Bear wicks
+plotshape(sr_showBreaks and ta.crossover(close, highUsePivot) and open - low > close - open,  title='Bull Wick', text='Bull Wick', style=shape.labelup,   location=location.belowbar, color=color.green, textcolor=color.white, size=size.tiny, force_overlay=true)
+plotshape(sr_showBreaks and ta.crossunder(close, lowUsePivot) and open - close < high - open,  title='Bear Wick', text='Bear Wick', style=shape.labeldown, location=location.abovebar, color=color.red,   textcolor=color.white, size=size.tiny, force_overlay=true)
+
+alertcondition(ta.crossunder(close, lowUsePivot)  and osc > volumeThresh, title='Support Broken',    message='Support Broken')
+alertcondition(ta.crossover(close, highUsePivot)  and osc > volumeThresh, title='Resistance Broken', message='Resistance Broken')
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+//  4) VSA WYCKOFF VOLUME  — converted v4 -> v5  (lives in this indicator's own pane)
+// ════════════════════════════════════════════════════════════════════════════════
+vsa_on              = input.bool(true,  title='Enable VSA Volume', group='📈 VSA Wyckoff Volume')
+showMA              = input.bool(false, title='Show Volume Moving Average', group='📈 VSA Wyckoff Volume')
+lengthVolumeMA      = input.int(20,    title='Length of MA applied on Volume', group='📈 VSA Wyckoff Volume')
+ratioUltraVolume    = input.float(2.2, title='Ultra High Volume Ratio',  group='📈 VSA Wyckoff Volume')
+ratioVeryHighVolume = input.float(1.8, title='Very High Volume Ratio',   group='📈 VSA Wyckoff Volume')
+ratioHighVolume     = input.float(1.2, title='High Volume Ratio',        group='📈 VSA Wyckoff Volume')
+ratioNormalVolume   = input.float(0.8, title='Normal Volume Ratio',      group='📈 VSA Wyckoff Volume')
+ratioLowVolume      = input.float(0.4, title='Low Volume Ratio',         group='📈 VSA Wyckoff Volume')
+ratioVeryLowVolume  = input.float(0.4, title='Very Low Volume Ratio',    group='📈 VSA Wyckoff Volume')
+
+// WILDERS MA
+float volumeMA = 0.0
+volumeMA := nz(volumeMA[1]) + (volume - nz(volumeMA[1])) / lengthVolumeMA
+
+ultraHighVolumeMin = volumeMA * ratioUltraVolume
+veryHighVolumeMin  = volumeMA * ratioVeryHighVolume
+highVolumeMin      = volumeMA * ratioHighVolume
+normalVolumeMin    = volumeMA * ratioNormalVolume
+lowVolumeMin       = volumeMA * ratioLowVolume
+
+volUltraHigh = volume >= ultraHighVolumeMin
+volVeryHigh  = volume >= veryHighVolumeMin and volume < ultraHighVolumeMin
+volHigh      = volume >= highVolumeMin     and volume < veryHighVolumeMin
+volNormal    = volume >= normalVolumeMin   and volume < highVolumeMin
+volLow       = volume >= lowVolumeMin       and volume < normalVolumeMin
+volVeryLow   = volume < lowVolumeMin
+
+palette = volUltraHigh ? color.purple : volVeryHigh ? color.red : volHigh ? color.orange : volNormal ? color.green : volLow ? color.blue : color.silver
+
+plot(vsa_on ? volume : na, color=vsa_on ? palette : na, style=plot.style_columns, title='Volume')
+plot(vsa_on and showMA ? volumeMA : na, style=plot.style_line, color=color.green, title='Volume MA')

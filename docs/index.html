@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>All-in-One Chart — VWMA + Fear/Greed + Liquidity + Wyckoff</title>
+<style>
+  :root { --bg:#0c0e15; --panel:#151823; --fg:#d1d4dc; --muted:#787b86; --accent:#2962FF; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif; }
+  header { padding:10px 14px; background:var(--panel); border-bottom:1px solid #222634; display:flex; flex-wrap:wrap; gap:10px 16px; align-items:center; }
+  header h1 { font-size:15px; margin:0 12px 0 0; font-weight:600; }
+  label { font-size:12px; color:var(--fg); display:inline-flex; align-items:center; gap:5px; cursor:pointer; user-select:none; }
+  select, input[type=text] { background:#0c0e15; color:var(--fg); border:1px solid #2a2e3e; border-radius:5px; padding:4px 6px; font-size:12px; }
+  .toggles { display:flex; flex-wrap:wrap; gap:6px 14px; }
+  .sep { width:1px; height:20px; background:#2a2e3e; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:5px; padding:5px 12px; font-size:12px; cursor:pointer; }
+  button:hover { opacity:.9; }
+  #status { font-size:12px; color:var(--muted); }
+  #chart { width:100%; height:calc(100vh - 56px); }
+  .legend { position:absolute; left:14px; top:64px; z-index:5; font-size:12px; background:rgba(21,24,35,.7); padding:6px 8px; border-radius:6px; line-height:1.5; pointer-events:none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>All-in-One Chart</h1>
+  <label>Symbol <input id="symbol" type="text" value="ETHUSDT" size="9" /></label>
+  <label>TF
+    <select id="interval">
+      <option>5m</option><option>15m</option><option>1h</option>
+      <option selected>4h</option><option>1d</option><option>1w</option>
+    </select>
+  </label>
+  <label>MA
+    <select id="matype">
+      <option>SMA</option><option>EMA</option><option selected>WMA</option><option>HMA</option><option>RMA</option>
+    </select>
+  </label>
+  <button id="reload">Tải lại</button>
+  <span class="sep"></span>
+  <div class="toggles">
+    <label><input type="checkbox" id="t_vwma" checked> VWMA</label>
+    <label><input type="checkbox" id="t_fear" checked> FearZone</label>
+    <label><input type="checkbox" id="t_greed" checked> GreedZone</label>
+    <label><input type="checkbox" id="t_liq" checked> Liquidity</label>
+    <label><input type="checkbox" id="t_vol" checked> Volume(VSA)</label>
+    <label><input type="checkbox" id="t_wyk" checked> Wyckoff</label>
+  </div>
+  <span id="status"></span>
+</header>
+<div id="chart"></div>
+<div class="legend" id="legend"></div>
+
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<script src="indicators.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,356 @@
+// All-in-One combined indicator (personal/educational use). Original works & licenses:
+//   1) Volume Weighted Moving Average (VWMA)            — TradingView built-in
+//   2) FearZone (Zeiierman)                             © Zeiierman  (CC BY-NC-SA 4.0)
+//   3) GreedZone (Zeiierman)                            © Zeiierman  (CC BY-NC-SA 4.0)
+//   4) Liquidity Spectrum Visualizer [BigBeluga]        © BigBeluga  (CC BY-NC-SA 4.0)
+//   5) Wyckoff Accumulation Distribution                © faytterro  (MPL 2.0)
+// All five draw on the price chart, so they share one overlay pane.
+// Fear/Greed migrated v5 -> v6; Wyckoff migrated v5 -> v6; conflicting names renamed.
+
+//@version=6
+indicator("All-in-One: VWMA + Fear/Greed + Liquidity + Wyckoff", shorttitle="AIO VWMA+FG+Liq+Wyckoff", overlay=true, max_boxes_count=500, max_labels_count=500, calc_bars_count=1000)
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+//  MODULE TOGGLES
+// ════════════════════════════════════════════════════════════════════════════════
+show_vwma  = input.bool(true, "① Enable VWMA",                group="Modules")
+fz_on      = input.bool(true, "② Enable FearZone",            group="Modules")
+gz_on      = input.bool(true, "③ Enable GreedZone",           group="Modules")
+liq_master = input.bool(true, "④ Enable Liquidity Spectrum",  group="Modules")
+show_wyk   = input.bool(true, "⑤ Enable Wyckoff Acc/Dist",    group="Modules")
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+//  SHARED (used by Fear/Greed)
+// ════════════════════════════════════════════════════════════════════════════════
+source = input.source(ohlc4, title="Source", group="Shared (Fear/Greed)", tooltip="Shared source for Fear/Greed calculations")
+matype = input.string("WMA", options=["SMA", "EMA", "WMA", "HMA", "RMA"], title="Moving Average Type", group="Shared (Fear/Greed)")
+
+average(src_, len_) =>
+    switch matype
+        "SMA" => ta.sma(src_, len_)
+        "EMA" => ta.ema(src_, len_)
+        "WMA" => ta.wma(src_, len_)
+        "HMA" => ta.hma(src_, len_)
+        "RMA" => ta.rma(src_, len_)
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+//  1) VOLUME WEIGHTED MOVING AVERAGE (VWMA)
+// ════════════════════════════════════════════════════════════════════════════════
+vwma_len    = input.int(20, "Length", minval=1, group="① VWMA")
+vwma_src    = input.source(close, "Source", group="① VWMA")
+vwma_offset = input.int(0, "Offset", minval=-500, maxval=500, group="① VWMA")
+vwma_col    = input.color(#2962FF, "VWMA Color", group="① VWMA")
+
+vwma = ta.vwma(vwma_src, vwma_len)
+plot(show_vwma ? vwma : na, title="VWMA", color=vwma_col, offset=vwma_offset)
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+//  2) FEARZONE (Zeiierman)
+// ════════════════════════════════════════════════════════════════════════════════
+fz_high      = input.int(30, title="High Period", group="② FearZone", tooltip="Bars for highest-high calc")
+fz_stdev     = input.int(50, title="Stdev Period", group="② FearZone", tooltip="Bars for standard deviation calc")
+fz_alertCirc = input.bool(true, title="Show Alert Circle?", group="② FearZone")
+fz_body      = input.color(#FC6C85, title="Body", group="② FearZone", inline="fzcol")
+fz_border    = input.color(color.red, title="Border", group="② FearZone", inline="fzcol")
+
+calc_FZ1(src, hp, sp) =>
+    FZ1      = (ta.highest(src, hp) - src) / ta.highest(src, hp)
+    AVG1     = average(FZ1, sp)
+    STDEV1   = ta.stdev(FZ1, sp)
+    FZ1Limit = AVG1 + STDEV1
+    [FZ1, FZ1Limit]
+
+calc_FZ2(src, hp, sp) =>
+    FZ2      = average(src, hp)
+    AVG2     = average(FZ2, sp)
+    STDEV2   = ta.stdev(FZ2, sp)
+    FZ2Limit = AVG2 - STDEV2
+    [FZ2, FZ2Limit]
+
+[FZ1, FZ1Limit] = calc_FZ1(source, fz_high, fz_stdev)
+[FZ2, FZ2Limit] = calc_FZ2(source, fz_high, fz_stdev)
+
+Fearzone_Con  = fz_on and FZ1 > FZ1Limit and FZ2 < FZ2Limit
+FearZoneOpen  = Fearzone_Con ? low - ta.tr : na
+FearZoneClose = Fearzone_Con ? low - 2 * ta.tr : na
+
+plotcandle(FearZoneOpen, FearZoneOpen, FearZoneClose, FearZoneClose, color=fz_body, bordercolor=fz_border, title="FearZone Candlesticks")
+
+fz_AlertCol = Fearzone_Con != Fearzone_Con[1] and fz_alertCirc ? fz_body : na
+plotshape(Fearzone_Con, style=shape.circle, location=location.belowbar, size=size.tiny, color=fz_AlertCol, title="FearZone Alert Circle")
+
+alertcondition(Fearzone_Con != Fearzone_Con[1], title="FearZone", message="FearZone detected")
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+//  3) GREEDZONE (Zeiierman)
+// ════════════════════════════════════════════════════════════════════════════════
+gz_low       = input.int(30, title="Low Period", group="③ GreedZone", tooltip="Bars for lowest-low calc")
+gz_stdev     = input.int(50, title="Stdev Period", group="③ GreedZone", tooltip="Bars for standard deviation calc")
+gz_alertCirc = input.bool(true, title="Show Alert Circle?", group="③ GreedZone")
+gz_body      = input.color(#90EE90, title="Body", group="③ GreedZone", inline="gzcol")
+gz_border    = input.color(color.green, title="Border", group="③ GreedZone", inline="gzcol")
+
+calc_GZ1(src, lp, sp) =>
+    GZ1      = (ta.lowest(src, lp) - src) / ta.lowest(src, lp)
+    AVG1     = average(GZ1, sp)
+    STDEV1   = ta.stdev(GZ1, sp)
+    GZ1Limit = AVG1 - STDEV1
+    [GZ1, GZ1Limit]
+
+calc_GZ2(src, lp, sp) =>
+    GZ2      = average(src, lp)
+    AVG2     = average(GZ2, sp)
+    STDEV2   = ta.stdev(GZ2, sp)
+    GZ2Limit = AVG2 + STDEV2
+    [GZ2, GZ2Limit]
+
+[GZ1, GZ1Limit] = calc_GZ1(source, gz_low, gz_stdev)
+[GZ2, GZ2Limit] = calc_GZ2(source, gz_low, gz_stdev)
+
+Greedzone_Con  = gz_on and GZ1 < GZ1Limit and GZ2 > GZ2Limit
+GreedZoneOpen  = Greedzone_Con ? low + ta.tr : na
+GreedZoneClose = Greedzone_Con ? low + 2 * ta.tr : na
+
+plotcandle(GreedZoneOpen, GreedZoneOpen, GreedZoneClose, GreedZoneClose, color=gz_body, bordercolor=gz_border, title="GreedZone Candlesticks")
+
+gz_AlertCol = Greedzone_Con != Greedzone_Con[1] and gz_alertCirc ? gz_body : na
+plotshape(Greedzone_Con, style=shape.circle, location=location.abovebar, size=size.tiny, color=gz_AlertCol, title="GreedZone Alert Circle")
+
+alertcondition(Greedzone_Con != Greedzone_Con[1], title="GreedZone", message="GreedZone detected")
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+//  4) LIQUIDITY SPECTRUM VISUALIZER [BigBeluga]
+// ════════════════════════════════════════════════════════════════════════════════
+lookback   = input.int(200, "LookBack", group="④ Liquidity Spectrum")
+vol_bubles = input.bool(true, "Display Volume Bubbles", group="④ Liquidity Spectrum")
+volume_pr  = input.bool(true, "Volume Profile",        group="④ Liquidity Spectrum")
+liq_levels = input.bool(true, "Liquidity Levels",      group="④ Liquidity Spectrum")
+col_up     = input.color(#22b16c, "", inline="colors", group="④ Liquidity Spectrum")
+col_dn     = input.color(#dd7e2a, "", inline="colors", group="④ Liquidity Spectrum")
+
+allow = (last_bar_index - bar_index < lookback) and liq_master
+
+n_vol = volume / ta.stdev(volume, 200)
+
+cond0 = n_vol < 1
+cond1 = n_vol >= 1 and n_vol < 2
+cond2 = n_vol >= 2 and n_vol < 3
+cond3 = n_vol >= 3 and n_vol < 4
+cond4 = n_vol >= 4
+
+vp_offset = -lookback - (volume_pr ? 50 : 0)
+
+if barstate.islast and liq_master
+    h_l = array.new<float>()
+    for j = 0 to lookback - 1
+        h_l.push(high[j])
+        h_l.push(low[j])
+
+    bins = array.new<float>(100)
+    step = (h_l.max() - h_l.min()) / 100
+    var boxes_bins = array.new<box>()
+    var poc_lvls   = array.new<line>()
+
+    for b in boxes_bins
+        b.delete()
+    for l in poc_lvls
+        l.delete()
+    boxes_bins.clear()
+    poc_lvls.clear()
+
+    for i = 0 to 100 - 1
+        bins.set(i, 0)
+
+    for i = 0 to bins.size() - 1
+        lower = h_l.min() + step * i
+        upper = lower + step
+        for j = 0 to lookback - 1
+            if high[j] == h_l.max()
+                label.new(bar_index - j, high[j], style=label.style_label_down, text=str.tostring(high[j]), color=col_dn)
+            if low[j] == h_l.min()
+                label.new(bar_index - j, low[j], style=label.style_label_up, text=str.tostring(low[j]), color=col_up)
+            c = close[j]
+            if c >= lower - step and c <= upper + step
+                bins.set(i, bins.get(i) + volume[j])
+
+    for i = 0 to bins.size() - 1
+        lower = h_l.min() + step * i
+        upper = lower + step
+        val = int(bins.get(i) / bins.max() * 50)
+
+        col_res_sup = close > math.avg(upper, lower) ? col_up : col_dn
+
+        if volume_pr
+            vp_col = color.from_gradient(val, 0, 50, color.new(col_res_sup, 90), col_res_sup)
+            boxes_bins.push(box.new(bar_index + vp_offset, upper, bar_index + val + vp_offset, lower, bgcolor=vp_col, border_color=color(na)))
+
+        if val > 25 and liq_levels
+            color_pocs = color.from_gradient(val, 25, 50, color.new(col_res_sup, 90), col_res_sup)
+            width = val < 35 ? 1 : val > 35 ? 2 : val > 45 ? 3 : 1
+            poc_lvls.push(line.new(bar_index + vp_offset, math.avg(upper, lower), bar_index + 5, math.avg(upper, lower), color=color_pocs, width=width))
+
+    box.delete(box.new(bar_index + vp_offset, h_l.max(), bar_index + 5, h_l.min(), color.new(chart.fg_color, 50), 1, bgcolor=na)[1])
+
+// Volume bubbles
+colorr = close > open ? col_up : col_dn
+gradient_col = color.from_gradient(n_vol, 0, 5, color.new(colorr, 50), colorr)
+display_vol = (vol_bubles and liq_master) ? display.all : display.none
+
+plotshape(allow and cond0 ? hlc3 : na, "", shape.circle, location.absolute, gradient_col, 0, "", na, size=size.tiny,   show_last=lookback, force_overlay=true, editable=false, display=display_vol)
+plotshape(allow and cond1 ? hlc3 : na, "", shape.circle, location.absolute, gradient_col, 0, "", na, size=size.small,  show_last=lookback, force_overlay=true, editable=false, display=display_vol)
+plotshape(allow and cond2 ? hlc3 : na, "", shape.circle, location.absolute, gradient_col, 0, "", na, size=size.normal, show_last=lookback, force_overlay=true, editable=false, display=display_vol)
+plotshape(allow and cond3 ? hlc3 : na, "", shape.circle, location.absolute, gradient_col, 0, "", na, size=size.large,  show_last=lookback, force_overlay=true, editable=false, display=display_vol)
+plotshape(allow and cond4 ? hlc3 : na, "", shape.circle, location.absolute, gradient_col, 0, "", na, size=size.huge,   show_last=lookback, force_overlay=true, editable=false, display=display_vol)
+
+if cond4 and allow and vol_bubles
+    label.new(bar_index, hlc3, str.tostring(volume, format.volume), xloc.bar_index, yloc.price, #00000000, label.style_label_center, chart.fg_color, force_overlay=true)
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+//  5) WYCKOFF ACCUMULATION / DISTRIBUTION (faytterro)  — migrated v5 -> v6
+// ════════════════════════════════════════════════════════════════════════════════
+color_   = input.color(color.white, "Text Color", group="⑤ Wyckoff Acc/Dist")
+rsilen   = input.int(14, "RSI Length", group="⑤ Wyckoff Acc/Dist")
+rsisens  = input.int(20, title="Trend Sensitivity", maxval=50, minval=0, group="⑤ Wyckoff Acc/Dist", tooltip="Higher = fewer bull/bear signals, more sideways trend signals.")
+pivotLen = input.int(5, "Pivot Length", minval=1, group="⑤ Wyckoff Acc/Dist")
+
+rsi = ta.rsi(close, rsilen)
+
+utad   = rsi < 50 + rsisens and rsi[1] > 50 + rsisens
+spring = rsi > 50 - rsisens and rsi[1] < 50 - rsisens
+
+myhigh(len) =>
+    x = array.new<float>()
+    for i = 0 to len - 1
+        x.push(high[i])
+    x.max()
+
+mylow(len) =>
+    x = array.new<float>()
+    for i = 0 to len - 1
+        x.push(low[i])
+    x.min()
+
+side = (rsi < 50 + rsisens and rsi > 50 - rsisens) or (rsi[1] < 50 + rsisens and rsi[1] > 50 - rsisens)
+bull = rsi > 50 + rsisens and rsi[1] > 50 + rsisens
+bear = rsi < 50 - rsisens and rsi[1] < 50 - rsisens
+
+boxlen = ta.barssince(side and not side[1])
+
+barcolor(show_wyk ? (bull ? color.lime : bear ? color.purple : na) : na, offset=-2)
+
+x1 = ta.valuewhen(side and not side[1], bar_index, 0)
+x2 = ta.valuewhen(not side and side[1], bar_index[1], 0) - 1
+y1 = myhigh(math.max(1, boxlen + 1))[2]
+y2 = mylow(math.max(1, boxlen + 1))[2]
+
+var box trendBox = na
+if side[1] and not side and show_wyk
+    trendBox := box.new(x1, y1, x2, y2, color.gray, 1, line.style_solid, extend.none, xloc.bar_index, x1 < x2 ? color.rgb(120, 123, 134, 90) : na, text_color=color.new(color_, 80))
+
+var string after_trend = na
+if bull
+    after_trend := "Accumulation"
+else if bear
+    after_trend := "Distribution"
+
+if not na(trendBox) and after_trend == "Accumulation"
+    box.set_bgcolor(trendBox, color.rgb(76, 175, 79, 95))
+    box.set_text(trendBox, "Accumulation")
+else if not na(trendBox) and after_trend == "Distribution"
+    box.set_bgcolor(trendBox, color.rgb(255, 82, 82, 95))
+    box.set_text(trendBox, "Distribution")
+
+rsiLow    = 50 - rsisens
+rsiHigh   = 50 + rsisens
+offsetVal = -pivotLen
+
+// ta.pivotlow/high return FLOAT (pivot price) in v6; convert to bool presence flags.
+pivotLowVal  = ta.pivotlow(low, pivotLen, pivotLen)
+pivotHighVal = ta.pivothigh(high, pivotLen, pivotLen)
+pivotLow  = not na(pivotLowVal)
+pivotHigh = not na(pivotHighVal)
+rsiAtPivot = rsi[pivotLen]
+
+// Flags
+var bool isSCFlag  = false
+var bool isARFlag  = false
+var bool isSTFlag  = false
+var bool isBCFlag  = false
+var bool isDARFlag = false
+var bool isDSTFlag = false
+
+// SC — Selling Climax
+isSC = pivotLow and rsiAtPivot < rsiLow and not isSCFlag and not spring
+plotshape(show_wyk and isSC, "The Selling Climax", location=location.belowbar, style=shape.triangleup, color=color.green, size=size.tiny, offset=offsetVal, text="SC", textcolor=color_, display=display.pane)
+isSCFlag := isSC ? true : isSCFlag
+
+// AR — Automatic Rally
+var int scBarIndex = na
+if isSC
+    scBarIndex := bar_index - pivotLen
+isAR = false
+if not na(scBarIndex)
+    if pivotHigh and (bar_index - pivotLen > scBarIndex) and not isARFlag
+        isAR := true
+        scBarIndex := na
+isARFlag := isAR ? true : isARFlag
+plotshape(show_wyk and isAR, "Automatic Rally", style=shape.triangledown, location=location.abovebar, color=color.green, size=size.tiny, offset=offsetVal, text="AR", textcolor=color_, display=display.pane)
+
+// ST — Secondary Test (Accumulation)
+var int pivotCounter = 0
+if pivotLow
+    pivotCounter := pivotCounter + 1
+if rsiAtPivot < rsiLow
+    pivotCounter := 0
+isST = pivotCounter == 1 and pivotLow and not isSTFlag
+plotshape(show_wyk and isST, "The Secondary Test", location=location.belowbar, style=shape.triangleup, color=color.green, size=size.tiny, offset=offsetVal, text="ST", textcolor=color_, display=display.pane)
+isSTFlag := isST ? true : isSTFlag
+
+// BC — Buying Climax
+isBC = rsiAtPivot > rsiHigh and pivotHigh and not isBCFlag and not utad
+plotshape(show_wyk and isBC, "The Buying Climax", location=location.abovebar, style=shape.triangledown, color=color.red, size=size.tiny, offset=offsetVal, text="BC", textcolor=color_, display=display.pane)
+isBCFlag := isBC ? true : isBCFlag
+
+// DAR — Automatic Reaction
+var int bcBarIndex = na
+if isBC
+    bcBarIndex := bar_index - pivotLen
+isDAR = false
+if not na(bcBarIndex)
+    if pivotLow and (bar_index - pivotLen > bcBarIndex) and not isDARFlag
+        isDAR := true
+        bcBarIndex := na
+isDARFlag := isDAR ? true : isDARFlag
+plotshape(show_wyk and isDAR, "Automatic Reaction", location=location.belowbar, style=shape.triangleup, color=color.red, size=size.tiny, offset=offsetVal, text="AR", textcolor=color_, display=display.pane)
+
+// DST — Secondary Test (Distribution)
+var int darBarIndex = na
+if isDAR
+    darBarIndex := bar_index - pivotLen
+isDST = false
+if not na(darBarIndex)
+    if pivotHigh and (bar_index - pivotLen > darBarIndex) and not isDSTFlag and not isBC
+        isDST := true
+        darBarIndex := na
+isDSTFlag := isDST ? true : isDSTFlag
+plotshape(show_wyk and isDST, "The Secondary Test", location=location.abovebar, style=shape.triangledown, color=color.red, size=size.tiny, offset=offsetVal, text="ST", textcolor=color_, display=display.pane)
+
+// Other pivots (orange)
+plotshape(show_wyk and pivotLow and not isSC and not isST and not isAR and not isDAR, "Pivot Low", location=location.belowbar, style=shape.triangleup, color=color.orange, size=size.auto, offset=offsetVal, display=display.pane)
+plotshape(show_wyk and pivotHigh and not isAR and not isDST and not isBC, "Pivot High", location=location.abovebar, style=shape.triangledown, color=color.orange, size=size.auto, offset=offsetVal, display=display.pane)
+
+// Reset flags each new bar
+if bar_index != bar_index[1]
+    isSCFlag  := false
+    isARFlag  := false
+    isSTFlag  := false
+    isBCFlag  := false
+    isDARFlag := false
+    isDSTFlag := false
